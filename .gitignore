@@ -1,5 +1,6 @@
 .env
 dist/
 chunks/
+uploads/
 node_modules
 service-acc.json

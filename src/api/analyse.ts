@@ -5,6 +5,7 @@ import { parsePsList } from '../plugin-handlers/ps-list';
 import { executeVol } from '../executor';
 import { genRandom } from '../helper';
 import { Hono } from 'hono';
+import { db } from '../db';
 
 export const analyzeHandler = new Hono();
 
@@ -25,19 +26,32 @@ const pluginsFn: Record<string, Function> = {
 
 analyzeHandler.post('/api/analyze', async (c) => {
   const { fileId, plugin } = await c.req.json();
+  const id = c.req.query("userId");
   const analysisId = genRandom();
+
+  console.log("Handling");
 
   if (!plugins[plugin]) return c.json({
     message: "invalid_plugin",
     status: "fail",
   });
 
-  executeVol(fileId, plugin, pluginsFn[plugin]).then((val) => {
-    // 
+  await db.ref(`users/${id}/analyses/${analysisId}`).set('in_progress');
+
+  executeVol(fileId, plugins[plugin], pluginsFn[plugin]).then(async (val) => {
+    console.log("Val", val);
+    await db.ref(`users/${id}/analyses/${analysisId}`).set('completed');
+    await db.ref(`users/${id}/analysisData/${plugin}`).update({
+      [analysisId]: {
+          ...(val as Record<string, any>),
+          __timestamp: Date.now()
+        }
+    });
   })
-  .catch(er => {
-    // 
+  .catch(async er => {
+    console.log(er);
+    await db.ref(`users/${id}/analyses/${analysisId}`).set('failed');
   });
 
-  c.json({ status: "analysis_started", analysisId });
+  return c.json({ status: "analysis_started", analysisId });
 });

@@ -1,52 +1,38 @@
+import { genRandom } from '../helper';
 import { Hono } from 'hono';
-import JSZip from 'jszip';
 import fs from 'fs';
+import { db } from '../db';
 
 export const uploadHandler = new Hono();
 
-// Combine chunks after all are uploaded
-const combineChunks = async (name: string) => {
-  const zip = new JSZip();
-  const chunks = [];
-
-  for (let i = 0; i < 4; i++) {
-    const chunkPath = `chunks/${name}-${i}.zip`;
-    const chunk = fs.readFileSync(chunkPath);
-
-    const decompressedChunk = JSZip.loadAsync(chunk)
-      .then((zipFile) => zipFile.file(`chunk-${i}`)!
-      .async('nodebuffer')
-    );
-
-    chunks.push(decompressedChunk);
-    fs.unlinkSync(chunkPath); // Remove chunk file after reading
-  }
+uploadHandler.post('/api/memory-dump', async (c) => {
+  const userId = c.req.query("userId");
+  const fileId = genRandom();
 
   if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
-  const writeStream = fs.createWriteStream(`uploads/dump-${name}.mem`);
 
-  for (const chunk of chunks) {
-    writeStream.write(chunk);
+  const body = await c.req.json();
+  const base64Data = body["file"]; // Assuming "file" contains the base64 string
+
+  if (!base64Data) {
+    return c.json({
+      message: "File data is missing",
+      status: "fail"
+    });
   }
 
-  writeStream.end();
-};
+  // Remove the base64 header if it exists
+  const base64HeaderIndex = base64Data.indexOf(',');
+  const base64String = base64HeaderIndex !== -1 ? base64Data.substring(base64HeaderIndex + 1) : base64Data;
 
-uploadHandler.post('/api/upload', async (c) => {
-  const index = Number(c.req.query("id"));
-  const name = c.req.query("name") || "chunk";
-  
-  if (Number.isNaN(index)) return c.json({
-    message: "Id parameter is invalid",
-    status: "fail"
-  });
+  // Decode base64 string
+  const buffer = Buffer.from(base64String, 'base64');
 
-  if (!fs.existsSync("chunks")) fs.mkdirSync("chunks");
-  const chunk = (await c.req.parseBody())["chunk"] as File;
-  fs.writeFileSync(`chunks/${name}-${index}.zip`, Buffer.from(await chunk.arrayBuffer()));
+  // Write the buffer to a file
+  fs.writeFileSync(`uploads/${fileId}.7z`, buffer);
+  await db.ref(`users/${userId}/files`).set({
+    [fileId]: 1
+  })
 
-  c.json({ status: "success", message: 'Chunk uploaded' });
-}).get('/api/complete-upload', async (c) => {
-  await combineChunks(c.req.query("name") || "chunk");
-  c.json({ status: "success", message: 'File upload successful' });
+  return c.json({ status: "success", message: 'Dump uploaded', fileId });
 });
